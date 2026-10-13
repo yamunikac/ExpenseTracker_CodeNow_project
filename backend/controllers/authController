@@ -1,16 +1,30 @@
+
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-// =======================
 // Register User
-// =======================
 const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    if (
+      !name?.trim() ||
+      !email?.trim() ||
+      !password ||
+      password.length < 6
+    ) {
+      return res.status(400).json({
+        message:
+          "Name, valid email, and password of at least 6 characters are required",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+    });
 
     if (existingUser) {
       return res.status(400).json({
@@ -18,97 +32,115 @@ const registerUser = async (req, res) => {
       });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
     await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: normalizedEmail,
       password: hashedPassword,
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Registration successful",
     });
-
   } catch (error) {
-    console.log(error);
+    console.error("Registration error:", error);
 
-    res.status(500).json({
+    if (error.code === 11000) {
+      return res.status(400).json({
+        message: "User already exists",
+      });
+    }
+
+    return res.status(500).json({
       message: "Server Error",
     });
   }
 };
 
-// =======================
 // Login User
-// =======================
 const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
-    const user = await User.findOne({ email });
-
-    if (!user) {
+    if (!email?.trim() || !password) {
       return res.status(400).json({
-        message: "Invalid Email",
+        message: "Email and password are required",
       });
     }
 
-    // Compare password
+    if (!process.env.JWT_SECRET) {
+      console.error("JWT_SECRET is missing from environment variables");
+
+      return res.status(500).json({
+        message: "Server configuration error",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const user = await User.findOne({
+      email: normalizedEmail,
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        message: "Invalid email or password",
+      });
+    }
+
     const isMatch = await bcrypt.compare(
       password,
       user.password
     );
 
     if (!isMatch) {
-      return res.status(400).json({
-        message: "Invalid Password",
+      return res.status(401).json({
+        message: "Invalid email or password",
       });
     }
 
-    // Generate JWT Token
     const token = jwt.sign(
-      {
-        id: user._id,
-      },
+      { id: user._id },
       process.env.JWT_SECRET,
-      {
-        expiresIn: "1d",
-      }
+      { expiresIn: "1d" }
     );
 
-   res.status(200).json({
-  message: "Login Successful",
-  token,
-  user: {
-    id: user._id,
-    name: user.name,
-    email: user.email,
-    createdAt: user.createdAt,
-  },
-});
-
+    return res.status(200).json({
+      message: "Login Successful",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
+    });
   } catch (error) {
-    console.log(error);
+    console.error("Login error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server Error",
     });
   }
 };
 
-// =======================
 // Forgot Password
-// =======================
 const forgotPassword = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
-    const user = await User.findOne({ email });
+    if (!email?.trim() || !password || password.length < 6) {
+      return res.status(400).json({
+        message: "Email and a password of at least 6 characters are required",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const user = await User.findOne({
+      email: normalizedEmail,
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -116,41 +148,55 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Update password
-    user.password = hashedPassword;
-
+    user.password = await bcrypt.hash(password, 10);
     await user.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Password updated successfully",
     });
-
   } catch (error) {
-    console.log(error);
+    console.error("Forgot password error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server Error",
     });
   }
 };
 
+// Update Profile
 const updateProfile = async (req, res) => {
   try {
     const { id } = req.params;
-
     const { name, email } = req.body;
+
+    if (!name?.trim() || !email?.trim()) {
+      return res.status(400).json({
+        message: "Name and email are required",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      _id: { $ne: id },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: "Email is already in use",
+      });
+    }
 
     const user = await User.findByIdAndUpdate(
       id,
       {
-        name,
-        email,
+        name: name.trim(),
+        email: normalizedEmail,
       },
       {
         new: true,
+        runValidators: true,
       }
     );
 
@@ -160,20 +206,16 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    res.status(200).json(user);
+    return res.status(200).json(user);
+  } catch (error) {
+    console.error("Update profile error:", error);
 
-  } catch (err) {
-
-    res.status(500).json({
-      message: err.message,
+    return res.status(500).json({
+      message: "Unable to update profile",
     });
-
   }
 };
 
-// =======================
-// Export Controllers
-// =======================
 module.exports = {
   registerUser,
   loginUser,
