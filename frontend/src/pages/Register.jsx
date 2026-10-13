@@ -1,11 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+
+import { useState } from "react";
 import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
 import { API_BASE_URL } from "../api";
-import "./Login.css"; // Use the same CSS as Login
-
-const OTP_API_URL = "https://dispersed-unwritten-foster.ngrok-free.dev";
-const RESEND_COOLDOWN = 30; // seconds, matches backend's "wait 30 secs" rule
+import "./Login.css";
 
 function Register() {
   const navigate = useNavigate();
@@ -15,17 +13,9 @@ function Register() {
     email: "",
     password: "",
     confirmPassword: "",
-    otp: "",
   });
 
-  const [otpStatus, setOtpStatus] = useState("idle"); // idle | sending | sent | verifying | verified
-  const [cooldown, setCooldown] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  const timerRef = useRef(null);
-
-  useEffect(() => {
-    return () => clearInterval(timerRef.current);
-  }, []);
 
   const handleChange = (e) => {
     setFormData({
@@ -34,77 +24,8 @@ function Register() {
     });
   };
 
-  const startCooldown = () => {
-    setCooldown(RESEND_COOLDOWN);
-    timerRef.current = setInterval(() => {
-      setCooldown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  const handleSendOtp = async () => {
-    if (!formData.email) {
-      alert("Enter your email first");
-      return;
-    }
-
-    setOtpStatus("sending");
-    try {
-      const res = await axios.post(`${OTP_API_URL}/sendotp`, {
-        target: formData.email,
-        channel: "EMAIL",
-        purpose: "SIGNUP",
-        subject: "Your OTP",
-        message: "YOUR OTP IS",
-      });
-
-      // 201 Created -> mail sent
-      alert(res.data || "OTP sent to your email");
-      setOtpStatus("sent");
-      startCooldown();
-    } catch (err) {
-      // 429 also lands here since axios treats non-2xx as error
-      const msg = err.response?.data || "Failed to send OTP";
-      alert(msg);
-      setOtpStatus("idle");
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    if (!formData.otp) {
-      alert("Enter the OTP first");
-      return;
-    }
-
-    setOtpStatus("verifying");
-    try {
-      const res = await axios.post(`${OTP_API_URL}/validateotp`, {
-        user: formData.email,
-        otp: formData.otp,
-        purpose: "SIGNUP",
-      });
-
-      alert(res.data || "OTP verified");
-      setOtpStatus("verified");
-    } catch (err) {
-      const msg = err.response?.data || "Invalid OTP";
-      alert(msg);
-      setOtpStatus("sent"); // let them retry, fields stay locked
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (otpStatus !== "verified") {
-      alert("Please verify your email with OTP first");
-      return;
-    }
 
     if (formData.password !== formData.confirmPassword) {
       alert("Passwords do not match");
@@ -112,6 +33,7 @@ function Register() {
     }
 
     setSubmitting(true);
+
     try {
       const res = await axios.post(`${API_BASE_URL}/register`, {
         name: formData.name,
@@ -130,21 +52,22 @@ function Register() {
         email: "",
         password: "",
         confirmPassword: "",
-        otp: "",
       });
-      setOtpStatus("idle");
 
-      navigate("/dashboard");
+      navigate("/login");
     } catch (err) {
-      console.log(err);
-      alert(err.response?.data?.message || "Registration Failed");
+      console.error("Registration error:", err.response?.data || err.message);
+
+      alert(
+        err.response?.data?.message ||
+          (err.response?.data
+            ? JSON.stringify(err.response.data)
+            : "Registration failed. Please check your backend connection.")
+      );
     } finally {
       setSubmitting(false);
     }
   };
-
-  const emailLocked = otpStatus === "sending" || otpStatus === "sent" || otpStatus === "verifying" || otpStatus === "verified";
-  const passwordEnabled = otpStatus === "verified";
 
   return (
     <div className="login-page">
@@ -152,7 +75,9 @@ function Register() {
         <div className="text-center mb-4">
           <div className="logo-circle">💰</div>
           <h2 className="mt-3 fw-bold">Create Account</h2>
-          <p className="text-muted">Create your Expense Tracker account</p>
+          <p className="text-muted">
+            Create your Expense Tracker account
+          </p>
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -171,65 +96,16 @@ function Register() {
 
           <div className="mb-3">
             <label className="form-label">Email</label>
-            <div className="d-flex gap-2">
-              <input
-                type="email"
-                name="email"
-                className="form-control"
-                placeholder="Enter your email"
-                value={formData.email}
-                onChange={handleChange}
-                disabled={emailLocked}
-                required
-              />
-              <button
-                type="button"
-                className="btn btn-outline-primary"
-                onClick={handleSendOtp}
-                disabled={emailLocked || cooldown > 0}
-                style={{ whiteSpace: "nowrap" }}
-              >
-                {otpStatus === "sending"
-                  ? "Sending..."
-                  : cooldown > 0
-                  ? `Resend (${cooldown}s)`
-                  : otpStatus === "sent" || otpStatus === "verifying"
-                  ? "Resend OTP"
-                  : "Send OTP"}
-              </button>
-            </div>
+            <input
+              type="email"
+              name="email"
+              className="form-control"
+              placeholder="Enter your email"
+              value={formData.email}
+              onChange={handleChange}
+              required
+            />
           </div>
-
-          {(otpStatus === "sent" || otpStatus === "verifying" || otpStatus === "verified") && (
-            <div className="mb-3">
-              <label className="form-label">OTP</label>
-              <div className="d-flex gap-2">
-                <input
-                  type="text"
-                  name="otp"
-                  className="form-control"
-                  placeholder="Enter the OTP"
-                  value={formData.otp}
-                  onChange={handleChange}
-                  disabled={otpStatus === "verified"}
-                  required
-                />
-                <button
-                  type="button"
-                  className="btn btn-outline-success"
-                  onClick={handleVerifyOtp}
-                  disabled={otpStatus === "verifying" || otpStatus === "verified"}
-                  style={{ whiteSpace: "nowrap" }}
-                >
-                  {otpStatus === "verifying"
-                    ? "Verifying..."
-                    : otpStatus === "verified"
-                    ? "Verified ✓"
-                    : "Verify"}
-                </button>
-              </div>
-            </div>
-          )}
 
           <div className="mb-3">
             <label className="form-label">Password</label>
@@ -237,10 +113,10 @@ function Register() {
               type="password"
               name="password"
               className="form-control"
-              placeholder={passwordEnabled ? "Create a password" : "Verify email first"}
+              placeholder="Create a password"
               value={formData.password}
               onChange={handleChange}
-              disabled={!passwordEnabled}
+              minLength={6}
               required
             />
           </div>
@@ -251,10 +127,10 @@ function Register() {
               type="password"
               name="confirmPassword"
               className="form-control"
-              placeholder={passwordEnabled ? "Confirm your password" : "Verify email first"}
+              placeholder="Confirm your password"
               value={formData.confirmPassword}
               onChange={handleChange}
-              disabled={!passwordEnabled}
+              minLength={6}
               required
             />
           </div>
@@ -262,7 +138,7 @@ function Register() {
           <button
             type="submit"
             className="btn btn-primary w-100"
-            disabled={!passwordEnabled || submitting}
+            disabled={submitting}
           >
             {submitting ? "Creating Account..." : "Create Account"}
           </button>
